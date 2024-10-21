@@ -2,19 +2,20 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.StringTokenizer;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Mapper.Context;
 import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
-public class WordCount {
+public class WordCount_PerTaskTally {
+    // letters 'm', 'n', 'o', 'p',and 'q'
     private static final Map<Character, Integer> letters = new HashMap<Character, Integer>() {{
         put('m', 0);
         put('n', 1);
@@ -31,27 +32,47 @@ public class WordCount {
         }
     }
 
-    // letters “m”, “n”, “o”, “p”,and “q”
     public static class TokenizerMapper
             extends Mapper<Object, Text, Text, IntWritable>{
-
-        private final static IntWritable one = new IntWritable(1);
+        private Map<String, Integer> perTaskTallyCounter;
         private Text word = new Text();
+        private IntWritable count = new IntWritable();
+
+        @Override
+        protected void setup(Mapper<Object, Text, Text, IntWritable>.Context context)
+            throws IOException, InterruptedException {
+            super.setup(context);
+            this.perTaskTallyCounter = new HashMap<String, Integer>();
+        }
+
 
         public void map(Object key, Text value, Context context
         ) throws IOException, InterruptedException {
             StringTokenizer itr = new StringTokenizer(value.toString());
+
+            // Build local map counter
             while (itr.hasMoreTokens()) {
                 String token = itr.nextToken();
-                word.set(itr.nextToken());
 
-                // Step 1 - Look to refactor later
                 if (!token.isEmpty()) {
                     char firstChar = Character.toLowerCase(token.charAt(0));
-                    if (firstChar == 'm' || firstChar == 'n' || firstChar == 'o' || firstChar == 'p' || firstChar == 'q') {
-                        context.write(word, one);
+                    if (letters.containsKey(firstChar)) {
+                        this.perTaskTallyCounter.put(token, this.perTaskTallyCounter.getOrDefault(token, 0) + 1);
                     }
                 }
+            }
+        }
+
+        @Override
+        protected void cleanup(Mapper<Object, Text, Text, IntWritable>.Context context)
+            throws IOException, InterruptedException {
+            super.cleanup(context);
+
+            // Emit each word in map counter
+            for (Map.Entry<String, Integer> keyValuePair : this.perTaskTallyCounter.entrySet()){
+                word.set(keyValuePair.getKey());
+                count.set(keyValuePair.getValue());
+                context.write(word, count);
             }
         }
     }
@@ -75,9 +96,9 @@ public class WordCount {
     public static void main(String[] args) throws Exception {
         Configuration conf = new Configuration();
         Job job = Job.getInstance(conf, "word count");
-        job.setJarByClass(WordCount.class);
+        job.setJarByClass(WordCount_PerTaskTally.class);
         job.setMapperClass(TokenizerMapper.class);
-        job.setCombinerClass(IntSumReducer.class);
+        // job.setCombinerClass(IntSumReducer.class); // Combiner is disabled
         job.setReducerClass(IntSumReducer.class);
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(IntWritable.class);
